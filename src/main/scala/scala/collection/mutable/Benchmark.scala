@@ -97,7 +97,7 @@ object Benchmark extends App {
   object CompactHashMapWrapper extends Wrapper {
     var hm: CompactHashMap[String, String] = _
     def testType = "CompactHashMap"
-    def init = hm = new CompactHashMap[String, String]
+    def init = hm = CompactHashMap[String, String]
     def put(key: String, value: String) = hm.put(key, value)
     def get(key: String) = hm.get(key)
     def remove(key: String) = hm.remove(key)

@@ -6,12 +6,12 @@ import org.scalatest.matchers.ShouldMatchers
 class CompactHashMapTest extends FlatSpec with ShouldMatchers {
 
   "A CompactHashMap" should "have size 0 when empty" in {
-  val hm = new CompactHashMap[String, String]()
+  val hm = CompactHashMap[String, String]()
   hm.size should equal (0)   
   }
 
   it should "have keys and values added with put" in {
-    val hm = new CompactHashMap[String, String]()
+    val hm = CompactHashMap[String, String]()
     hm.put("hello", "world")
     hm.put("goodbye", "cruel world")
     hm.size should equal (2)
@@ -20,7 +20,7 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
   
   it should "have keys and values added with +=" in {
-    val hm = new CompactHashMap[String, String]()
+    val hm = CompactHashMap[String, String]()
     hm += (("hello", "world"))
     hm += (("goodbye", "cruel world"))
     hm.size should equal (2)
@@ -29,7 +29,7 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
   
   it should "not have keys and values deleted with remove" in {
-    val hm = new CompactHashMap[String, String]()
+    val hm = CompactHashMap[String, String]()
     hm.put("hello", "world")
     hm.put("goodbye", "cruel world")
     hm.remove("goodbye")
@@ -39,7 +39,7 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
   
   it should "not have keys and values deleted with -=" in {
-    val hm = new CompactHashMap[String, String]()
+    val hm = CompactHashMap[String, String]()
     hm.put("hello", "world")
     hm.put("goodbye", "cruel world")
     hm -= "goodbye"
@@ -49,7 +49,7 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
   
   it should "handle collisions during put" in {
-    val hm = new CompactHashMap[Collider, String]
+    val hm = CompactHashMap[Collider, String]
     hm.put(Collider("hello"), "world")
     hm.put(Collider("goodbye"), "cruel world")
     hm.size should equal (2)
@@ -58,7 +58,7 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
   
   it should "handle collisions during remove" in {
-    val hm = new CompactHashMap[Collider, String]
+    val hm = CompactHashMap[Collider, String]
     hm.put(Collider("hello"), "world")
     hm.put(Collider("goodbye"), "cruel world")
     hm.remove(Collider("goodbye"))
@@ -71,14 +71,14 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
 
   it should "create an iterator equivalent to a list of keys/values" in {
-    val hm = new CompactHashMap[String, String]()
+    val hm = CompactHashMap[String, String]()
     val elements = 0 until 20 map {x => ("a" + x, "b" + x)}
     elements foreach (hm.put _).tupled
     elements.iterator.toList.sorted should equal (elements.sorted)
   }
   
   it should "create an iterator equivalent to a list of keys/values even under collision" in {
-    val hm = new CompactHashMap[Collider, String]
+    val hm = CompactHashMap[Collider, String]
     val elements = 0 until 20 map {x => (Collider("a" + x), "b" + x)}
     elements foreach (hm.put _).tupled
     elements.iterator.toList.sorted should equal (elements.sorted) 
