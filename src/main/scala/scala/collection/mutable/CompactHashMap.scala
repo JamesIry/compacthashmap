@@ -25,8 +25,8 @@ import generic._
  *  @see [[http://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#hash_tables "Scala's Collection Library overview"]]
  *  section on `Hash Tables` for more information.
  *
- *  @tparam A    the type of the keys contained in this hash map.
- *  @tparam B    the type of the values assigned to keys in this hash map.
+ *  @tparam K    the type of the keys contained in this hash map.
+ *  @tparam V    the type of the values assigned to keys in this hash map.
  *
  *  @define Coll `mutable.CompactHashMap`
  *  @define coll mutable hash map
@@ -44,7 +44,7 @@ import generic._
  */
 // implementors note. The goal of this class is to substantially reduce the amount of memory required to
 // store key/value pairs. To that aim is uses a lot of very low level hackery around array access and casting
-class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRef], val loadFactor2 : Int)
+class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRef], val loadFactor2: Int)
   extends AbstractMap[K, V]
   with Map[K, V]
   with MapLike[K, V, CompactHashMap[K, V]] {
@@ -106,7 +106,6 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
    */
   @inline private[this] def toElemKeyFromEntryKey(key: AnyRef): K = (if (key.isInstanceOf[NULL_KEY.type]) null else key).asInstanceOf[K]
 
-  
   /**
    * Makes the traversal of internal data structurs generic, avoiding duplicated code. The Action
    * is responsible for determining what to do based on whether a key is found and where
@@ -285,7 +284,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
  */
 object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   implicit def canBuildFrom[A, B]: CanBuildFrom[Coll, (A, B), CompactHashMap[A, B]] = new MapCanBuildFrom[A, B]
-  def empty[A, B]: CompactHashMap[A, B] = apply[A, B]()
+  @inline def empty[A, B]: CompactHashMap[A, B] = apply[A, B]()
 
   def apply[A, B](): CompactHashMap[A, B] = apply[A, B](DEFAULT_INITIAL_CAPACITY, DEFAULT_LOAD_FACTOR2)
 
@@ -298,12 +297,12 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
 
     new CompactHashMap(maxOccupied, table, loadFactor2)
   }
-  
+
   // the table size is twice the capacity to handle both keys and values
-  @inline private def allocateTable(capacity : Int) = new Array[AnyRef](capacity << 1)
-  
-    // need at least one free slot for open addressing
-  @inline private def computeMaxOccupied(capacity : Int, loadFactor2 : Int) = java.lang.Math.min(capacity - 1, capacity * loadFactor2 / 100)
+  @inline private def allocateTable(capacity: Int) = new Array[AnyRef](capacity << 1)
+
+  // need at least one free slot for open addressing
+  @inline private def computeMaxOccupied(capacity: Int, loadFactor2: Int) = java.lang.Math.min(capacity - 1, capacity * loadFactor2 / 100)
 
   @inline private[this] def ceiling(v: Float): Int = {
     val possibleResult = v.asInstanceOf[Int]
@@ -314,7 +313,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   @inline private[this] def powerOfTwo(x: Int): Int = {
     var candidate = 1
     while (candidate < x) {
-      candidate <<=1
+      candidate <<= 1
     }
     candidate
   }
@@ -337,7 +336,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
 
   @inline private def DEFAULT_LOAD_FACTOR2 = 75
   @inline private def DEFAULT_INITIAL_CAPACITY = 8
-  
+
   /**
    * Sticks a key/value pair into an array at the index specified
    */
@@ -411,119 +410,160 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   }
 
   /**
-   * Action performed on +=, also a delegate target for PutAction
+   * Common code for adding when not found in chain
    */
-  private object PlusEqualsAction extends Action[Unit] {
+  @inline private[this] def putNotFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
+    putKeyValue(chain, chainIndex, entryKey, entryValue)
+    hm.addOne()
+  }
 
-    @inline def notFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
+  /**
+   * Common code for adding when not found in a full chain
+   */
+  @inline private[this] def putNotFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {
+    val newChain = new Array[AnyRef](chain.size * 2)
+    var i = 0
+    while (i < chain.size) {
+      newChain(i) = chain(i)
+      i += 1
+    }
+    putKeyValue(newChain, i, entryKey, entryValue)
+    hm.table(tableIndex + 1) = newChain
+    hm.addOne()
+  }
+
+  /**
+   * Common code for adding when not found
+   */
+  @inline private[this] def putNotFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {
+    putKeyValue(hm.table, index, entryKey, entryValue)
+    hm.addOne()
+  }
+
+  /**
+   * Common code for adding when not found in a new collision
+   */
+  @inline private[this] def putNotFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
+    val newChain = new Array[AnyRef](4)
+    putKeyValue(newChain, 0, hm.table(index), hm.table(index + 1))
+    putKeyValue(newChain, 2, entryKey, entryValue)
+    putKeyValue(hm.table, index, CHAINED_KEY, newChain)
+    hm.addOne()
+  }
+
+  /**
+   * Action performed on +=
+   */
+  private val PlusEqualsAction = new Action[Unit] {
+
+    def notFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
+      putNotFoundInChain(hm, entryKey, entryValue, tableIndex, chain, chainIndex)
+    }
+
+    def foundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
       putKeyValue(chain, chainIndex, entryKey, entryValue)
-      hm.addOne()
     }
 
-    @inline def foundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
-      putKeyValue(chain, chainIndex, entryKey, entryValue)
+    def notFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {
+      putNotFoundFullChain(hm, entryKey, entryValue, tableIndex, chain)
     }
 
-    @inline def notFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {
-      val newChain = new Array[AnyRef](chain.size * 2)
-      var i = 0
-      while (i < chain.size) {
-        newChain(i) = chain(i)
-        i += 1
-      }
-      putKeyValue(newChain, i, entryKey, entryValue)
-      hm.table(tableIndex + 1) = newChain
-      hm.addOne()
+    def notFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {
+      putNotFound(hm, entryKey, entryValue, index)
     }
 
-    @inline def notFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {
-      putKeyValue(hm.table, index, entryKey, entryValue)
-      hm.addOne()
-    }
-
-    @inline def found(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
+    def found(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
       putKeyValue(hm.table, index, entryKey, entryValue)
     }
 
-    @inline def notFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
-      val newChain = new Array[AnyRef](4)
-      putKeyValue(newChain, 0, hm.table(index), hm.table(index + 1))
-      putKeyValue(newChain, 2, entryKey, entryValue)
-      putKeyValue(hm.table, index, CHAINED_KEY, newChain)
-      hm.addOne()
+    def notFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
+      putNotFoundNewCollision(hm, entryKey, entryValue, curKey, index)
     }
   }
 
   /**
-   * Action performed by put. Mostly it delegates to PlusEqualsAction for the real work
-   * and then returns Some(oldValue) if the key was already there and None if not
+   * Action performed by put. Mostly basically works the same as PlusEqualsAction
+   * but then returns Some(oldValue) if the key was already there and None if not
    */
   private val PutAction = new Action[Option[AnyRef]] {
     def notFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) = {
-      PlusEqualsAction.notFoundInChain(hm, entryKey, entryValue, tableIndex, chain, chainIndex)
+      putNotFoundInChain(hm, entryKey, entryValue, tableIndex, chain, chainIndex)
       None
     }
     def foundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) = {
       val oldValue = chain(chainIndex + 1)
-      PlusEqualsAction.foundInChain(hm, entryKey, entryValue, tableIndex, chain, chainIndex)
+      putKeyValue(chain, chainIndex, entryKey, entryValue)
       Some(oldValue)
     }
     def notFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) = {
-      PlusEqualsAction.notFoundFullChain(hm, entryKey, entryValue, tableIndex, chain)
+      putNotFoundFullChain(hm, entryKey, entryValue, tableIndex, chain)
       None
     }
     def notFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) = {
-      PlusEqualsAction.notFound(hm, entryKey, entryValue, index)
+      putNotFound(hm, entryKey, entryValue, index)
       None
     }
     def found(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
       val oldValue = hm.table(index + 1)
-      PlusEqualsAction.found(hm, entryKey, entryValue, curKey, index)
+      putKeyValue(hm.table, index, entryKey, entryValue)
       Some(oldValue)
     }
     def notFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
-      PlusEqualsAction.notFoundNewCollision(hm, entryKey, entryValue, curKey, index)
+      putNotFoundNewCollision(hm, entryKey, entryValue, curKey, index)
       None
     }
   }
 
   /**
-   * Action performed by -=, also a delegate target for RemoveAction
+   * Common code for removing from a collision chain
    */
-  private object MinusEqualsAction extends Action[Unit] {
+  @inline private[this] def removeFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) = {
+    var j = chain.length - 2
+    var done = false
+    while (j > chainIndex && !done) {
+      if (chain(j) ne null) {
+        putKeyValue(chain, chainIndex, chain(j), chain(j + 1))
+        done = true
+      } else {
+        j -= 2
+      }
+    }
+    eraseKeyValue(chain, j)
+    if (j == 0) eraseKeyValue(hm.table, tableIndex)
+
+    hm.occupied -= 1
+  }
+
+  /**
+   * Common code for removing from the main bucket array
+   */
+  @inline private[this] def removeFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
+    putKeyValue(hm.table, index, null, null)
+    hm.occupied -= 1
+  }
+
+  /**
+   * Action performed by -=
+   */
+  private val MinusEqualsAction = new Action[Unit] {
     def notFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {}
 
-    @inline def foundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) = {
-      var j = chain.length - 2
-      var done = false
-      while (j > chainIndex && !done) {
-        if (chain(j) ne null) {
-          putKeyValue(chain, chainIndex, chain(j), chain(j + 1))
-          done = true
-        } else {
-          j -= 2
-        }
-      }
-      eraseKeyValue(chain, j)
-      if (j == 0) eraseKeyValue(hm.table, tableIndex)
-
-      hm.occupied -= 1
-    }
+    def foundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) =
+      removeFoundInChain(hm, entryKey, entryValue, tableIndex, chain, chainIndex)
 
     def notFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {}
 
     def notFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {}
 
-    @inline def found(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
-      putKeyValue(hm.table, index, null, null)
-      hm.occupied -= 1
+    def found(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
+      removeFound(hm, entryKey, entryValue, curKey, index)
     }
 
     def notFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {}
   }
 
   /**
-   * Action perfomed by remove. It basically delegates all its work to MinusEqualsAction and then
+   * Action perfomed by remove. It basically works the same as MinusEqualsAction but then
    * return Some(oldValue) if the key was found and None if not
    */
   private val RemoveAction = new Action[Option[AnyRef]] {
@@ -532,7 +572,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
 
     def foundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) = {
       val oldValue = chain(chainIndex + 1)
-      MinusEqualsAction.foundInChain(hm, entryKey, entryValue, tableIndex, chain, chainIndex)
+      removeFoundInChain(hm, entryKey, entryValue, tableIndex, chain, chainIndex)
       Some(oldValue)
     }
 
@@ -544,14 +584,12 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
 
     def found(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
       val oldValue = hm.table(index + 1)
-      MinusEqualsAction.found(hm, entryKey, entryValue, curKey, index)
+      removeFound(hm, entryKey, entryValue, curKey, index)
       Some(oldValue)
     }
 
     def notFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) =
       None
   }
-
-  
 
 }

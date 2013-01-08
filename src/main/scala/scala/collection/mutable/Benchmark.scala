@@ -16,7 +16,7 @@ object Benchmark extends App {
   // the number of key/value pairs inserted per timing
   // so if the current size is 10, then we'll do 100000 repeats of creating
   // a hash map and inserting 10 elements
-  val entriesPerTest = 1000000
+  val entriesPerTest = endSize
 
   test()
 
