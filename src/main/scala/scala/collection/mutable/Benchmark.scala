@@ -4,9 +4,9 @@ import com.gs.collections.impl.map.mutable.UnifiedMap
 
 object Benchmark extends App {
   // number of times the whole thing is repeated
-  val cycles = 100
+  val cycles = 20
   // number of times the results are ignored to allow the JVM to warm up
-  val ignoredCycles = 3
+  val ignoredCycles = cycles / 10
   // the chance of a get succeeding
   val hitRate = .9
   // start size of the hash map
