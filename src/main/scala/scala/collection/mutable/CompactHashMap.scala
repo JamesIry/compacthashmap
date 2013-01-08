@@ -104,7 +104,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
    * Converts from the form of key used int the table to the form of key
    * that a user sees - maps NULL_KEY to null
    */
-  @inline private[this] def toElemKeyFromEntryKey(key: AnyRef): K = (if (key.isInstanceOf[NULL_KEY.type]) null else key).asInstanceOf[K]
+  @inline private def toElemKeyFromEntryKey(key: AnyRef): K = (if (key.isInstanceOf[NULL_KEY.type]) null else key).asInstanceOf[K]
 
   /**
    * Makes the traversal of internal data structurs generic, avoiding duplicated code. The Action
@@ -146,17 +146,12 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
     }
   }
 
-  /**
-   * Any time the number of stored entries increases this method
-   * should be called. It increments the internal counter and
-   * then determines if a rehash is necessary
-   */
-  private def addOne() {
-    def rehash(newCapacity: Int) {
+    private def rehash() {
       val oldLength = table.length
       val old = table
-      table = allocateTable(newCapacity)
-      maxOccupied = computeMaxOccupied(newCapacity, loadFactor2)
+      // because the table is 2x the capacity, this will double the capacity in the rehash
+      table = allocateTable(oldLength)
+      maxOccupied = computeMaxOccupied(oldLength, loadFactor2)
       occupied = 0
 
       var i = 0
@@ -176,12 +171,6 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
         i += 2
       }
     }
-
-    occupied += 1
-    // since table.length is twice the capacity this doubles the capacity
-    // but there needs to be a special case for table.length = 0
-    if (occupied > maxOccupied) rehash(if (table.length == 0) 2 else table.length)
-  }
 
   override def +=(kv: (K, V)) = {
     findAndThen(kv._1, kv._2, PlusEqualsAction)
@@ -301,8 +290,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   // the table size is twice the capacity to handle both keys and values
   @inline private def allocateTable(capacity: Int) = new Array[AnyRef](capacity << 1)
 
-  // need at least one free slot for open addressing
-  @inline private def computeMaxOccupied(capacity: Int, loadFactor2: Int) = java.lang.Math.min(capacity - 1, capacity * loadFactor2 / 100)
+  @inline private def computeMaxOccupied(capacity: Int, loadFactor2: Int) = capacity * loadFactor2 / 100
 
   @inline private[this] def ceiling(v: Float): Int = {
     val possibleResult = v.asInstanceOf[Int]
@@ -410,45 +398,67 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   }
 
   /**
+   * Called when adding an key/value pair would increase the hash map beyond its limit
+   * Does a rehash first then does an add
+   */
+  @inline private[this] def putByRehash(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef) {
+    hm.rehash
+    val x = hm.asInstanceOf[CompactHashMap[AnyRef, AnyRef]]
+    x.put(x.toElemKeyFromEntryKey(entryKey), entryValue)
+  }
+  
+  /**
    * Common code for adding when not found in chain
    */
   @inline private[this] def putNotFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
-    putKeyValue(chain, chainIndex, entryKey, entryValue)
-    hm.addOne()
+    hm.occupied += 1
+    if (hm.occupied <= hm.maxOccupied) 
+    	putKeyValue(chain, chainIndex, entryKey, entryValue)
+    else 
+      putByRehash(hm, entryKey, entryValue)
   }
 
   /**
    * Common code for adding when not found in a full chain
    */
   @inline private[this] def putNotFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {
-    val newChain = new Array[AnyRef](chain.size * 2)
-    var i = 0
-    while (i < chain.size) {
-      newChain(i) = chain(i)
-      i += 1
-    }
-    putKeyValue(newChain, i, entryKey, entryValue)
-    hm.table(tableIndex + 1) = newChain
-    hm.addOne()
+    hm.occupied += 1
+    if (hm.occupied <= hm.maxOccupied) {
+	    val newChain = new Array[AnyRef](chain.size * 2)
+	    var i = 0
+	    while (i < chain.size) {
+	      newChain(i) = chain(i)
+	      i += 1
+	    }
+	    putKeyValue(newChain, i, entryKey, entryValue)
+	    hm.table(tableIndex + 1) = newChain
+    } else
+      putByRehash(hm, entryKey, entryValue)
   }
 
   /**
    * Common code for adding when not found
    */
   @inline private[this] def putNotFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {
-    putKeyValue(hm.table, index, entryKey, entryValue)
-    hm.addOne()
+    hm.occupied += 1
+    if (hm.occupied <= hm.maxOccupied) 
+    	putKeyValue(hm.table, index, entryKey, entryValue)
+    else 
+      putByRehash(hm, entryKey, entryValue)
   }
 
   /**
    * Common code for adding when not found in a new collision
    */
   @inline private[this] def putNotFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
-    val newChain = new Array[AnyRef](4)
-    putKeyValue(newChain, 0, hm.table(index), hm.table(index + 1))
-    putKeyValue(newChain, 2, entryKey, entryValue)
-    putKeyValue(hm.table, index, CHAINED_KEY, newChain)
-    hm.addOne()
+    hm.occupied += 1
+    if (hm.occupied <= hm.maxOccupied) {
+	    val newChain = new Array[AnyRef](4)
+	    putKeyValue(newChain, 0, hm.table(index), hm.table(index + 1))
+	    putKeyValue(newChain, 2, entryKey, entryValue)
+	    putKeyValue(hm.table, index, CHAINED_KEY, newChain)
+    } else 
+      putByRehash(hm, entryKey, entryValue)
   }
 
   /**
