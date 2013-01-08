@@ -88,4 +88,11 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
     override def hashCode = 0
     def compareTo(y : Collider) = this.x compareTo y.x
   }
+  
+  def dump(hm : CompactHashMap[_, _]) = {
+	    (hm.dump map { 
+	      case ys: Array[_] => "[" + ys.mkString(",") + "]"
+	      case y => "" + y
+	    }).mkString(",")
+	  }
 }
