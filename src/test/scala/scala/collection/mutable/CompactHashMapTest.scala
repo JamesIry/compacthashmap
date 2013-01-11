@@ -11,14 +11,36 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
 
   it should "have keys and values added with put" in {
-    val hm = CompactHashMap[String, String]()
-    hm.put("hello", "world")
-    hm.put("goodbye", "cruel world")
-    hm.size should equal (2)
-    hm.get("hello") should equal (Some("world"))
-    hm.get("goodbye") should equal (Some("cruel world"))
-  }
-  
+	    val hm = CompactHashMap[String, String]()
+	    hm.put("hello", "world")
+	    hm.put("goodbye", "cruel world")
+	    hm.size should equal (2)
+	    hm.get("hello") should equal (Some("world"))
+	    hm.get("goodbye") should equal (Some("cruel world"))
+	  }
+	  
+  it should "handle rehasing from many puts" in {
+	    val size = 200	    		
+	    val hm = CompactHashMap[Int, Int]()
+	    for (i <- 0 until size) {
+	    	hm.put(i, i)
+	    }
+	    for (i <- 0 until size) {
+	    	hm.get(i) should equal (Some(i))
+	    }
+	  }
+	  
+  it should "handle rehasing from many puts with collisions" in {
+	    val size = 200	    		
+	    val hm = CompactHashMap[Collider, String]()
+	    for (i <- 0 until size) {
+	    	hm.put(Collider("a" + i), "b" + i)
+	    }
+	    for (i <- 0 until size) {
+	    	hm.get(Collider("a" + i)) should equal (Some("b" + i))
+	    }
+	  }
+	  
   it should "have keys and values added with +=" in {
     val hm = CompactHashMap[String, String]()
     hm += (("hello", "world"))

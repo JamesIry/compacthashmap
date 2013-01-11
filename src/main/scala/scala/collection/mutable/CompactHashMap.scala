@@ -157,15 +157,15 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
       var i = 0
       while (i < oldLength) {
         val oldKey = old(i)
-        if (oldKey ne null) {
-          put(oldKey.asInstanceOf[K], old(i + 1).asInstanceOf[V])
-        } else if (oldKey.isInstanceOf[CHAINED_KEY.type]) {
+        if (oldKey.isInstanceOf[CHAINED_KEY.type]) {
           val chain = old(i + 1).asInstanceOf[Array[AnyRef]]
           var j = 0
           while (j < chain.length) {
             if (chain(j) ne null) put(chain(j).asInstanceOf[K], chain(j + 1).asInstanceOf[V])
             j += 2
           }
+        } else if (oldKey ne null) {
+          put(oldKey.asInstanceOf[K], old(i + 1).asInstanceOf[V])
         }
 
         i += 2
