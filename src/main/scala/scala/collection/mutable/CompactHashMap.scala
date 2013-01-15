@@ -71,7 +71,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
   //   be the value originally provided for that key.
   //  protected var table: Array[AnyRef] = _  
 
-  @inline private[this] def index(key: AnyRef) = {
+  private[this] def index(key: AnyRef) = {
     // copied from GS-Collections
     // "This function ensures that hashCodes that differ only by
     // constant multiples at each bit position have a bounded
@@ -95,7 +95,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
    * Converts from the form of key that a user sees into the form of key
    * used in the table - maps null to a NULL_KEY
    */
-  @inline private[this] def toEntryKeyFromElemKey(key: K): AnyRef = key match {
+  private[this] def toEntryKeyFromElemKey(key: K): AnyRef = key match {
     case null => NULL_KEY
     case _ => key.asInstanceOf[AnyRef]
   }
@@ -104,7 +104,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
    * Converts from the form of key used int the table to the form of key
    * that a user sees - maps NULL_KEY to null
    */
-  @inline private def toElemKeyFromEntryKey(key: AnyRef): K = (if (key.isInstanceOf[NULL_KEY.type]) null else key).asInstanceOf[K]
+  private def toElemKeyFromEntryKey(key: AnyRef): K = (if (key.isInstanceOf[NULL_KEY.type]) null else key).asInstanceOf[K]
 
   /**
    * Makes the traversal of internal data structurs generic, avoiding duplicated code. The Action
@@ -273,7 +273,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
  */
 object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   implicit def canBuildFrom[A, B]: CanBuildFrom[Coll, (A, B), CompactHashMap[A, B]] = new MapCanBuildFrom[A, B]
-  @inline def empty[A, B]: CompactHashMap[A, B] = apply[A, B]()
+  def empty[A, B]: CompactHashMap[A, B] = apply[A, B]()
 
   def apply[A, B](): CompactHashMap[A, B] = apply[A, B](DEFAULT_INITIAL_CAPACITY, DEFAULT_LOAD_FACTOR2)
 
@@ -288,17 +288,17 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   }
 
   // the table size is twice the capacity to handle both keys and values
-  @inline private def allocateTable(capacity: Int) = new Array[AnyRef](capacity << 1)
+  private def allocateTable(capacity: Int) = new Array[AnyRef](capacity << 1)
 
-  @inline private def computeMaxOccupied(capacity: Int, loadFactor2: Int) = capacity * loadFactor2 / 100
+  private def computeMaxOccupied(capacity: Int, loadFactor2: Int) = capacity * loadFactor2 / 100
 
-  @inline private[this] def ceiling(v: Float): Int = {
+  private[this] def ceiling(v: Float): Int = {
     val possibleResult = v.asInstanceOf[Int]
     if (v - possibleResult > 0.0F) possibleResult + 1
     else possibleResult
   }
 
-  @inline private[this] def powerOfTwo(x: Int): Int = {
+  private[this] def powerOfTwo(x: Int): Int = {
     var candidate = 1
     while (candidate < x) {
       candidate <<= 1
@@ -322,13 +322,13 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
     override def toString = "CHAINED_KEY"
   }
 
-  @inline private def DEFAULT_LOAD_FACTOR2 = 75
-  @inline private def DEFAULT_INITIAL_CAPACITY = 8
+  private def DEFAULT_LOAD_FACTOR2 = 75
+  private def DEFAULT_INITIAL_CAPACITY = 8
 
   /**
    * Sticks a key/value pair into an array at the index specified
    */
-  @inline private[this] def putKeyValue(table: Array[AnyRef], index: Int, entryKey: AnyRef, entryValue: AnyRef) {
+  private[this] def putKeyValue(table: Array[AnyRef], index: Int, entryKey: AnyRef, entryValue: AnyRef) {
     table(index) = entryKey
     table(index + 1) = entryValue
   }
@@ -336,7 +336,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   /**
    * Erases a key/value pair from an array at the index specified
    */
-  @inline private[this] def eraseKeyValue(table: Array[AnyRef], index: Int) = putKeyValue(table, index, null, null)
+  private[this] def eraseKeyValue(table: Array[AnyRef], index: Int) = putKeyValue(table, index, null, null)
 
   /**
    * Actions are arguments to the findAndThen method. findAndThen does the traversal
@@ -401,7 +401,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
    * Called when adding an key/value pair would increase the hash map beyond its limit
    * Does a rehash first then does an add
    */
-  @inline private[this] def putByRehash(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef) {
+  private[this] def putByRehash(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef) {
     hm.rehash
     val x = hm.asInstanceOf[CompactHashMap[AnyRef, AnyRef]]
     x.put(x.toElemKeyFromEntryKey(entryKey), entryValue)
@@ -410,7 +410,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   /**
    * Common code for adding when not found in chain
    */
-  @inline private[this] def putNotFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
+  private[this] def putNotFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
     hm.occupied += 1
     if (hm.occupied <= hm.maxOccupied) 
     	putKeyValue(chain, chainIndex, entryKey, entryValue)
@@ -421,7 +421,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   /**
    * Common code for adding when not found in a full chain
    */
-  @inline private[this] def putNotFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {
+  private[this] def putNotFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {
     hm.occupied += 1
     if (hm.occupied <= hm.maxOccupied) {
 	    val newChain = new Array[AnyRef](chain.size * 2)
@@ -439,7 +439,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   /**
    * Common code for adding when not found
    */
-  @inline private[this] def putNotFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {
+  private[this] def putNotFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {
     hm.occupied += 1
     if (hm.occupied <= hm.maxOccupied) 
     	putKeyValue(hm.table, index, entryKey, entryValue)
@@ -450,7 +450,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   /**
    * Common code for adding when not found in a new collision
    */
-  @inline private[this] def putNotFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
+  private[this] def putNotFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
     hm.occupied += 1
     if (hm.occupied <= hm.maxOccupied) {
 	    val newChain = new Array[AnyRef](4)
@@ -527,7 +527,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   /**
    * Common code for removing from a collision chain
    */
-  @inline private[this] def removeFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) = {
+  private[this] def removeFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) = {
     var j = chain.length - 2
     var done = false
     while (j > chainIndex && !done) {
@@ -547,7 +547,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   /**
    * Common code for removing from the main bucket array
    */
-  @inline private[this] def removeFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
+  private[this] def removeFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) = {
     putKeyValue(hm.table, index, null, null)
     hm.occupied -= 1
   }
