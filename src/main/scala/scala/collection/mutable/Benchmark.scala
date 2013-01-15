@@ -52,24 +52,43 @@ class Benchmark extends SimpleBenchmark {
     universeSize = (size / hitRate).toInt
     keys = (0 until universeSize map { x => r.nextInt.toString }).toArray
     values = (0 until universeSize map { x => r.nextInt.toString }).toArray
+    mapType.init
+    0 until size foreach { i =>
+      mapType.put(keys(i), values(i)).hashCode
+    }
   }
  
-  def timeAll(reps : Int) = {
+  def timePut(reps : Int) = {
     repeat(reps){
       mapType.init
       var result = 0
       0 until size foreach { i =>
         result += mapType.put(keys(i), values(i)).hashCode
       }
+      result
+    }
+  }
+  
+  def timeGet(reps : Int) = {
+    repeat(reps){
+      var result = 0
       0 until universeSize foreach { i =>
         result += mapType.get(keys(i)).hashCode
       }
+      result
+    }
+  }
+
+  def timeRemove(reps : Int) = {
+    repeat(reps){
+      var result = 0
       0 until universeSize foreach { i =>
         result += mapType.remove(keys(i)).hashCode
       }
       result
     }
   }
+  
 }
 
 object Wrapper {
