@@ -19,7 +19,8 @@ object Build extends Build {
         "com.google.code.gson" % "gson" % "1.7.1",
         "org.scalatest" % "scalatest_2.10" % "2.0.M6-SNAP5",
         // only needed by gs-collections which is used for benchmarking
-        "net.jcip" % "jcip-annotations" % "1.0"
+        "net.jcip" % "jcip-annotations" % "1.0",
+        "com.google.caliper" % "caliper" % "0.5-rc1"
     ),
     resolvers += "sonatypeSnapshots" at "http://oss.sonatype.org/content/repositories/snapshots",
 
