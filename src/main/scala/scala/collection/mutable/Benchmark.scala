@@ -44,25 +44,37 @@ class Benchmark extends SimpleBenchmark {
   var universeSize: Int = _
   var keys : Array[String] = _
   var values : Array[String] = _
+  var putOrder : Array[Int] = _
+  var getOrder : Array[Int] = _
+  var removeOrder : Array[Int] = _
 
   val hitRate = .9
 
   override def setUp() {
     val r = Random
+      
+    def shuffle(x : Int) : Array[Int] = 
+      r.shuffle((0 until x).toList).toArray
+
     universeSize = (size / hitRate).toInt
     keys = (0 until universeSize map { x => r.nextInt.toString }).toArray
     values = (0 until universeSize map { x => r.nextInt.toString }).toArray
     mapType.init
-    0 until size foreach { i =>
+    
+    putOrder = shuffle(size)
+    getOrder = shuffle(universeSize)
+    removeOrder = shuffle(universeSize)
+    putOrder foreach { i =>
       mapType.put(keys(i), values(i)).hashCode
     }
+    
   }
- 
+
   def timePut(reps : Int) = {
     repeat(reps){
       mapType.init
       var result = 0
-      0 until size foreach { i =>
+      putOrder foreach { i =>
         result += mapType.put(keys(i), values(i)).hashCode
       }
       result
@@ -72,7 +84,7 @@ class Benchmark extends SimpleBenchmark {
   def timeGet(reps : Int) = {
     repeat(reps){
       var result = 0
-      0 until universeSize foreach { i =>
+      getOrder foreach { i =>
         result += mapType.get(keys(i)).hashCode
       }
       result
@@ -82,7 +94,7 @@ class Benchmark extends SimpleBenchmark {
   def timeRemove(reps : Int) = {
     repeat(reps){
       var result = 0
-      0 until universeSize foreach { i =>
+      removeOrder foreach { i =>
         result += mapType.remove(keys(i)).hashCode
       }
       result
