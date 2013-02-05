@@ -112,7 +112,7 @@ class CompactHashMapTest extends FlatSpec with ShouldMatchers {
   }
   
   def dump(hm : CompactHashMap[_, _]) = {
-	    (hm.dump map { 
+	    (hm.diagnostics.dump map { 
 	      case ys: Array[_] => "[" + ys.mkString(",") + "]"
 	      case y => "" + y
 	    }).mkString(",")

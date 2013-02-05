@@ -233,36 +233,72 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
   }
 
   /**
-   *  Produces a diagnostic dump of the table that underlies this hash map.
+   * Diagnostic information about the internals of this hash map. Not normally
+   * needed by ordinary code, but may be useful for diagnosing performance problems
    */
-  def dump = table.clone
-
-  /**
-   * Number of buckets that hold collisions. Useful for diagnosing performance issues.
-   */
-  def collisionBuckets: Int =
-    (table.view.zipWithIndex filter { case (key, n) => n % 2 == 0 && (key.isInstanceOf[CHAINED_KEY.type]) }).size
-
-  /**
-   * Number of buckets that are occupied in this hash map.
-   */
-  def fullBuckets: Int =
-    (table.view.zipWithIndex filter { case (key, n) => n % 2 == 0 && (key ne null) }).size
-
-  /**
-   *  Number of buckets in the table
-   */
-  def buckets: Int = table.size / 2
-
-  /**
-   * Number of buckets that don't have a key/value pair
-   */
-  def emptyBuckets = buckets - fullBuckets
-
-  /**
-   * Number of elements that are in collision. Useful for diagnosing performance issues.
-   */
-  def collisions = size - fullBuckets - collisionBuckets
+  class Diagnostics {
+    /**
+     *  Produces a diagnostic dump of the table that underlies this hash map.
+     */
+    def dump = table.deep
+  
+    /**
+     * Number of buckets that hold collisions. Useful for diagnosing performance issues.
+     */
+    def collisionBucketsCount: Int =
+      (keyBuckets(table) filter {_.isInstanceOf[CHAINED_KEY.type] }).size
+  
+    /**
+     * Number of buckets that are occupied in this hash map.
+     */
+    def fullBucketsCount: Int =
+      (keyBuckets(table) filter {_ ne null}).size
+  
+    /**
+     *  Number of buckets in the table
+     */
+    def bucketsCount: Int = table.size / 2
+  
+    /**
+     * Number of buckets that don't have a key/value pair
+     */
+    def emptyBucketsCount = bucketsCount - fullBucketsCount
+  
+    /**
+     * Number of elements that are in collision. Useful for diagnosing performance issues.
+     */
+    def collisionsCount = size - (fullBucketsCount - collisionBucketsCount)
+    
+    /**
+     * Total number of array slots allocated by this hash map
+     */
+    def allocatedSlots = (allocatedSlotDistribution map {case (number, slots) => number * slots}).sum
+    
+    /**
+     * A map from a number to the number of buckets with that number of values
+     */
+    def elementCountDistribution = (keyValueBucketPairs(table) map {_ match {
+      case (key, vs) if key.isInstanceOf[CHAINED_KEY.type] => keyBuckets(vs.asInstanceOf[Array[Object]]).filter(_ ne null).size
+      case (null, _) => 0
+      case _ => 1
+    }}) groupBy identity map {case (size, list) => (size, list.size)}
+    
+    /**
+     * A map from a size to the number of buckets with that number of slots allocated. This is a different result
+     * from elementCountDistribution because it includes all slot spaces including keys and
+     * emtpy space
+     */
+    def allocatedSlotDistribution = (keyValueBucketPairs(table) map {_ match {
+      case (key, vs) if key.isInstanceOf[CHAINED_KEY.type] => 2 + vs.asInstanceOf[Array[Object]].size
+      case _ => 2
+    }}) groupBy identity map {case (size, list) => (size, list.size)}
+    
+    private def keyBuckets(table: Array[AnyRef]) = buckets(table, 0)
+    private def valueBuckets(table: Array[AnyRef]) = buckets(table, 1)
+    private def buckets(table: Array[AnyRef], mod: Int) = (table.view.zipWithIndex filter { case (_, n) => n % 2 == mod}).unzip._1
+    private def keyValueBucketPairs(table: Array[AnyRef]) = keyBuckets(table).toStream zip valueBuckets(table).toStream
+  }
+  def diagnostics = new Diagnostics
 
 }
 
