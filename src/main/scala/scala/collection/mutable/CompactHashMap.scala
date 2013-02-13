@@ -16,11 +16,14 @@ package scala.collection
 package mutable
 
 import generic._
+import scala.collection.parallel.mutable.ParHashMap
 
 /**
  * This class implements mutable maps using a hashtable in a compact form. It is inteneded to be 100% API compatible with HashMap and
  * have the same big-O guarantees, but to use substantially less space in its internal representation.
  *
+ *  @author JamesIry
+ *  @version 2.11
  *  @since 1
  *  @see [[http://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#hash_tables "Scala's Collection Library overview"]]
  *  section on `Hash Tables` for more information.
@@ -58,15 +61,23 @@ import generic._
  */
 // implementors note. The goal of this class is to substantially reduce the amount of memory required to
 // store key/value pairs. To that aim is uses a lot of very low level hackery around array access and casting
+@SerialVersionUID(2L)
 class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRef], val loadFactor: Int)
   extends AbstractMap[K, V]
   with Map[K, V]
-  with MapLike[K, V, CompactHashMap[K, V]] {
-
+  with MapLike[K, V, CompactHashMap[K, V]]
+//  TODO par
+//  with CustomParallelizable[(K, V), ParHashMap[K, V]]
+// TODO customer serialization
+  with Serializable
+{
   import CompactHashMap._
 
   // the number of key/value pairs in the map
   protected var occupied = 0
+  
+//  TODO par
+//  override def par=
 
   private[this] def index(key: AnyRef) = {
     // copied from GS-Collections
@@ -194,7 +205,33 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
 
   override def empty: CompactHashMap[K, V] = CompactHashMap.empty[K, V]
 
-  override def iterator: Iterator[(K, V)] = new Iterator[(K, V)] {
+  /* Override to avoid tuple allocation in foreach */
+  override def keySet: scala.collection.Set[K] = new DefaultKeySet {
+    override def foreach[C](f: K => C) = keysIterator foreach f
+  }
+
+  /* Override to avoid tuple allocation in foreach */
+  override def values: scala.collection.Iterable[V] = new DefaultValuesIterable {
+    override def foreach[C](f: V => C) = valuesIterator foreach f
+  }  
+  
+  override def iterator: Iterator[(K, V)] = new BaseIterator[(K,V)] {
+     def getResult(key: K, value: V) = (key, value)    
+  }
+  
+  override def keysIterator: Iterator[K] = new BaseIterator[K] {
+     def getResult(key: K, value: V) = key  
+  }
+  
+  override def valuesIterator: Iterator[V] = new BaseIterator[V] {
+     def getResult(key: K, value: V) = value  
+  }
+  
+  /**
+   * Usual song and dance to avoid boxing tuples during iteration
+   * over keys and values
+   */
+  private abstract class BaseIterator[T] extends AbstractIterator[T] {
     var table = CompactHashMap.this.table
     var index = 0
     var collisionIndex = 0
@@ -214,24 +251,26 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
       return false
     }
 
-    def next(): (K, V) = if (hasNext) {
+    def next(): T = if (hasNext) {
       val entryKey = table(index)
       val entryValue = table(index + 1)
       if (entryKey.isInstanceOf[CHAINED_KEY.type]) nextChained(entryValue.asInstanceOf[Array[AnyRef]])
       else {
         index += 2
-        (toElemKeyFromEntryKey(entryKey), entryValue.asInstanceOf[V])
+        getResult(toElemKeyFromEntryKey(entryKey), entryValue.asInstanceOf[V])
       }
     } else {
       throw new IndexOutOfBoundsException
     }
 
-    private[this] def nextChained(chain: Array[AnyRef]): (K, V) = {
+    private[this] def nextChained(chain: Array[AnyRef]): T = {
       val entryKey = chain(collisionIndex)
       val entryValue = chain(collisionIndex + 1)
       collisionIndex += 2
-      (toElemKeyFromEntryKey(entryKey), entryValue.asInstanceOf[V])
+      getResult(toElemKeyFromEntryKey(entryKey), entryValue.asInstanceOf[V])
     }
+    
+    def getResult(key: K, value: V) : T
   }
 
   /**
