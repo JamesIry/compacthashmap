@@ -62,7 +62,7 @@ import scala.collection.parallel.mutable.ParHashMap
 // implementors note. The goal of this class is to substantially reduce the amount of memory required to
 // store key/value pairs. To that aim is uses a lot of very low level hackery around array access and casting
 @SerialVersionUID(2L)
-class CompactHashMap[K, V] private (var maxOccupied: Int, @transient var table: Array[AnyRef], val loadFactor: Int)
+final class CompactHashMap[K, V] private (var maxOccupied: Int, @transient var table: Array[AnyRef], val loadFactor: Int)
   extends AbstractMap[K, V]
   with Map[K, V]
   with MapLike[K, V, CompactHashMap[K, V]]
@@ -335,7 +335,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, @transient var table: 
    * Diagnostic information about the internals of this hash map. Not normally
    * needed by ordinary code, but may be useful for diagnosing performance problems
    */
-  class Diagnostics {
+  private [mutable] class Diagnostics {
     /**
      * Verify that the internal structure of this hash map is fully consistent.
      * Throws an assertion error on any problem
@@ -434,7 +434,8 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, @transient var table: 
     private def buckets(table: Array[AnyRef], mod: Int) = (table.view.zipWithIndex filter { case (_, n) => n % 2 == mod }).unzip._1
     private def keyValueBucketPairs(table: Array[AnyRef]) = keyBuckets(table).toStream zip valueBuckets(table).toStream
   }
-  def diagnostics = new Diagnostics
+  
+  private[mutable] def diagnostics = new Diagnostics
 
 }
 
