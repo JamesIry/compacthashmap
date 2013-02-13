@@ -41,10 +41,24 @@ import generic._
  *    defined in object `CompactHashMap`.
  *  @define mayNotTerminateInf
  *  @define willNotTerminateInf
+ *  @param maxOccupied is the point beyond which we will rehash
+ *  @param table the table that drives everything. Every even slot is a key or a sentinel.
+ *    Every odd slot is the associated value.
+ *    Some special goodies:
+ *      If the key slot is a null value then that key/value pair is not set and the
+ *      value slot will be null.
+ *      If the key slot is NULL_KEY then the was key originally provided was a null
+ *      and the value slot will the the value provided for the null key.
+ *      If the key slot is CHAINED_KEY then there are collisions for the hash and the
+ *      value slot is itself an array of key/value pairs with similar goodies except that
+ *      because it's a flat list rather than a hash table there will be no CHAINED_KEYs.
+ *      All other values for key slot are the key originally provided and the value slot will
+ *      be the value originally provided for that key
+ *  @param loadFactor percentage of capacity at which a rehash will occur, e.g. 50 = 50%
  */
 // implementors note. The goal of this class is to substantially reduce the amount of memory required to
 // store key/value pairs. To that aim is uses a lot of very low level hackery around array access and casting
-class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRef], val loadFactor2: Int)
+class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRef], val loadFactor: Int)
   extends AbstractMap[K, V]
   with Map[K, V]
   with MapLike[K, V, CompactHashMap[K, V]] {
@@ -53,23 +67,6 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
 
   // the number of key/value pairs in the map
   protected var occupied = 0
-
-  // maxOccupied is the point beyond which we will rehash.
-  //  protected var maxOccupied: Int = _
-
-  // the table that drives everything. Every even slot is a key or a sentinel. 
-  // Every odd slot is the associated value.
-  // Some special goodies:
-  //   If the key slot is a null value then that key/value pair is not set and the
-  //   value slot will be null.
-  //   If the key slot is NULL_KEY then the was key originally provided was a null
-  //   and the value slot will the the value provided for the null key.
-  //   If the key slot is CHAINED_KEY then there are collisions for the hash and the
-  //   value slot is itself an array of key/value pairs with similar goodies except that
-  //   because it's a flat list rather than a hash table there will be no CHAINED_KEYs.
-  //   All other values for key slot are the key originally provided and the value slot will
-  //   be the value originally provided for that key.
-  //  protected var table: Array[AnyRef] = _  
 
   private[this] def index(key: AnyRef) = {
     // copied from GS-Collections
@@ -110,6 +107,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
    * Makes the traversal of internal data structurs generic, avoiding duplicated code. The Action
    * is responsible for determining what to do based on whether a key is found and where
    */
+  // this method is inlined to force action to be monomorphic at each call site
   @inline private[this] def findAndThen[X](key: K, value: V, action: Action[X]): X = {
     val entryKey = toEntryKeyFromElemKey(key)
     val entryValue = value.asInstanceOf[AnyRef]
@@ -146,31 +144,35 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
     }
   }
 
-    private def rehash() {
-      val oldLength = table.length
-      val old = table
-      // because the table is 2x the capacity, this will double the capacity in the rehash
-      table = allocateTable(oldLength)
-      maxOccupied = computeMaxOccupied(oldLength, loadFactor2)
-      occupied = 0
+  /**
+   * Rebuild the internal table to have twice the current capacity,
+   * modifying maxOccupied as needed
+   */
+  private def rehash() {
+    val oldLength = table.length
+    val old = table
+    // because the table is 2x the capacity, this will double the capacity in the rehash
+    table = allocateTable(oldLength)
+    maxOccupied = computeMaxOccupied(oldLength, loadFactor)
+    occupied = 0
 
-      var i = 0
-      while (i < oldLength) {
-        val oldKey = old(i)
-        if (oldKey.isInstanceOf[CHAINED_KEY.type]) {
-          val chain = old(i + 1).asInstanceOf[Array[AnyRef]]
-          var j = 0
-          while (j < chain.length) {
-            if (chain(j) ne null) put(chain(j).asInstanceOf[K], chain(j + 1).asInstanceOf[V])
-            j += 2
-          }
-        } else if (oldKey ne null) {
-          put(oldKey.asInstanceOf[K], old(i + 1).asInstanceOf[V])
+    var i = 0
+    while (i < oldLength) {
+      val oldKey = old(i)
+      if (oldKey.isInstanceOf[CHAINED_KEY.type]) {
+        val chain = old(i + 1).asInstanceOf[Array[AnyRef]]
+        var j = 0
+        while (j < chain.length) {
+          if (chain(j) ne null) put(chain(j).asInstanceOf[K], chain(j + 1).asInstanceOf[V])
+          j += 2
         }
-
-        i += 2
+      } else if (oldKey ne null) {
+        put(oldKey.asInstanceOf[K], old(i + 1).asInstanceOf[V])
       }
+
+      i += 2
     }
+  }
 
   override def +=(kv: (K, V)) = {
     findAndThen(kv._1, kv._2, PlusEqualsAction)
@@ -241,61 +243,65 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
      *  Produces a diagnostic dump of the table that underlies this hash map.
      */
     def dump = table.deep
-  
+
     /**
      * Number of buckets that hold collisions. Useful for diagnosing performance issues.
      */
     def collisionBucketsCount: Int =
-      (keyBuckets(table) filter {_.isInstanceOf[CHAINED_KEY.type] }).size
-  
+      (keyBuckets(table) filter { _.isInstanceOf[CHAINED_KEY.type] }).size
+
     /**
      * Number of buckets that are occupied in this hash map.
      */
     def fullBucketsCount: Int =
-      (keyBuckets(table) filter {_ ne null}).size
-  
+      (keyBuckets(table) filter { _ ne null }).size
+
     /**
      *  Number of buckets in the table
      */
     def bucketsCount: Int = table.size / 2
-  
+
     /**
      * Number of buckets that don't have a key/value pair
      */
     def emptyBucketsCount = bucketsCount - fullBucketsCount
-  
+
     /**
      * Number of elements that are in collision. Useful for diagnosing performance issues.
      */
     def collisionsCount = size - (fullBucketsCount - collisionBucketsCount)
-    
+
     /**
      * Total number of array slots allocated by this hash map
      */
-    def allocatedSlots = (allocatedSlotDistribution map {case (number, slots) => number * slots}).sum
-    
+    def allocatedSlots = (allocatedSlotDistribution map { case (number, slots) => number * slots }).sum
+
     /**
      * A map from a number to the number of buckets with that number of values
      */
-    def elementCountDistribution = (keyValueBucketPairs(table) map {_ match {
-      case (key, vs) if key.isInstanceOf[CHAINED_KEY.type] => keyBuckets(vs.asInstanceOf[Array[Object]]).filter(_ ne null).size
-      case (null, _) => 0
-      case _ => 1
-    }}) groupBy identity map {case (size, list) => (size, list.size)}
-    
+    def elementCountDistribution = (keyValueBucketPairs(table) map {
+      _ match {
+        case (key, vs) if key.isInstanceOf[CHAINED_KEY.type] => keyBuckets(vs.asInstanceOf[Array[Object]]).filter(_ ne null).size
+        case (null, _) => 0
+        case _ => 1
+      }
+    }) groupBy identity map { case (size, list) => (size, list.size) }
+
     /**
      * A map from a size to the number of buckets with that number of slots allocated. This is a different result
      * from elementCountDistribution because it includes all slot spaces including keys and
      * emtpy space
      */
-    def allocatedSlotDistribution = (keyValueBucketPairs(table) map {_ match {
-      case (key, vs) if key.isInstanceOf[CHAINED_KEY.type] => 2 + vs.asInstanceOf[Array[Object]].size
-      case _ => 2
-    }}) groupBy identity map {case (size, list) => (size, list.size)}
-    
+    def allocatedSlotDistribution = (keyValueBucketPairs(table) map {
+      _ match {
+        case (key, vs) if key.isInstanceOf[CHAINED_KEY.type] => 2 + vs.asInstanceOf[Array[Object]].size
+        case _ => 2
+      }
+    }) groupBy identity map { case (size, list) => (size, list.size) }
+
     private def keyBuckets(table: Array[AnyRef]) = buckets(table, 0)
     private def valueBuckets(table: Array[AnyRef]) = buckets(table, 1)
-    private def buckets(table: Array[AnyRef], mod: Int) = (table.view.zipWithIndex filter { case (_, n) => n % 2 == mod}).unzip._1
+    private def buckets(table: Array[AnyRef], mod: Int) = (table.view.zipWithIndex filter { case (_, n) => n % 2 == mod }).unzip._1
     private def keyValueBucketPairs(table: Array[AnyRef]) = keyBuckets(table).toStream zip valueBuckets(table).toStream
   }
   def diagnostics = new Diagnostics
@@ -309,18 +315,44 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
  */
 object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   implicit def canBuildFrom[A, B]: CanBuildFrom[Coll, (A, B), CompactHashMap[A, B]] = new MapCanBuildFrom[A, B]
-  def empty[A, B]: CompactHashMap[A, B] = apply[A, B]()
+  override def empty[A, B]: CompactHashMap[A, B] = create()
 
-  def apply[A, B](): CompactHashMap[A, B] = apply[A, B](DEFAULT_INITIAL_CAPACITY, DEFAULT_LOAD_FACTOR2)
-
-  def apply[A, B](initialCapacity: Int, loadFactor2: Int): CompactHashMap[A, B] = {
+  /**
+   * Creates a new CompactHashMap using the default load factor
+   * which should be good settings for most uses and a small initial
+   * capacity.
+   */
+  def apply[A, B](): CompactHashMap[A, B] = create()
+ 
+   /**
+   * Creates a new CompactHashMap using the default load factor
+   * which should be good settings for most uses. For initial capacity
+   * the map uses the size of the values list.
+   */
+  override def apply[A, B](values: (A,B)*): CompactHashMap[A, B] = {
+    withSettings[A, B]()(values:_*)
+  }
+  /**
+   * Creates a new CompactHashMap using the specified initial capacity and load factor
+   * 
+   * @param initialCapacity is the initial amount of space that the hash table can accommodate without rehashing
+   * @param loadFactor percentage of the capacity beyond which the hash table will double in
+   *   size given as an integer, e.g. 75 = 75%
+   */
+  def withSettings[A, B](initialCapacity: Int = DEFAULT_INITIAL_CAPACITY, loadFactor: Int = DEFAULT_LOAD_FACTOR)(values: (A,B)*): CompactHashMap[A, B] = {
+    val map = create[A, B](initialCapacity = initialCapacity, loadFactor = loadFactor)
+    values foreach {case (k,v) => map.put(k,v)}
+    map
+  }
+  
+  private def create[A,B](initialCapacity: Int = DEFAULT_INITIAL_CAPACITY, loadFactor: Int = DEFAULT_LOAD_FACTOR) = {
     if (initialCapacity < 0) throw new IllegalArgumentException("initial capacity cannot be less than 0");
-    val capacity = powerOfTwo(initialCapacity * 100 / loadFactor2)
+    val capacity = powerOfTwo(initialCapacity * 100 / loadFactor)
 
     val table = allocateTable(capacity)
-    val maxOccupied = computeMaxOccupied(capacity, loadFactor2)
+    val maxOccupied = computeMaxOccupied(capacity, loadFactor)
 
-    new CompactHashMap(maxOccupied, table, loadFactor2)
+    new CompactHashMap[A,B](maxOccupied, table, loadFactor)
   }
 
   // the table size is twice the capacity to handle both keys and values
@@ -358,7 +390,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
     override def toString = "CHAINED_KEY"
   }
 
-  private def DEFAULT_LOAD_FACTOR2 = 75
+  private def DEFAULT_LOAD_FACTOR = 75
   private def DEFAULT_INITIAL_CAPACITY = 8
 
   /**
@@ -442,15 +474,15 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
     val x = hm.asInstanceOf[CompactHashMap[AnyRef, AnyRef]]
     x.put(x.toElemKeyFromEntryKey(entryKey), entryValue)
   }
-  
+
   /**
    * Common code for adding when not found in chain
    */
   private[this] def putNotFoundInChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef], chainIndex: Int) {
     hm.occupied += 1
-    if (hm.occupied <= hm.maxOccupied) 
-    	putKeyValue(chain, chainIndex, entryKey, entryValue)
-    else 
+    if (hm.occupied <= hm.maxOccupied)
+      putKeyValue(chain, chainIndex, entryKey, entryValue)
+    else
       putByRehash(hm, entryKey, entryValue)
   }
 
@@ -460,14 +492,14 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   private[this] def putNotFoundFullChain(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, tableIndex: Int, chain: Array[AnyRef]) {
     hm.occupied += 1
     if (hm.occupied <= hm.maxOccupied) {
-	    val newChain = new Array[AnyRef](chain.size * 2)
-	    var i = 0
-	    while (i < chain.size) {
-	      newChain(i) = chain(i)
-	      i += 1
-	    }
-	    putKeyValue(newChain, i, entryKey, entryValue)
-	    hm.table(tableIndex + 1) = newChain
+      val newChain = new Array[AnyRef](chain.size * 2)
+      var i = 0
+      while (i < chain.size) {
+        newChain(i) = chain(i)
+        i += 1
+      }
+      putKeyValue(newChain, i, entryKey, entryValue)
+      hm.table(tableIndex + 1) = newChain
     } else
       putByRehash(hm, entryKey, entryValue)
   }
@@ -477,9 +509,9 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
    */
   private[this] def putNotFound(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, index: Int) {
     hm.occupied += 1
-    if (hm.occupied <= hm.maxOccupied) 
-    	putKeyValue(hm.table, index, entryKey, entryValue)
-    else 
+    if (hm.occupied <= hm.maxOccupied)
+      putKeyValue(hm.table, index, entryKey, entryValue)
+    else
       putByRehash(hm, entryKey, entryValue)
   }
 
@@ -489,11 +521,11 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   private[this] def putNotFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) {
     hm.occupied += 1
     if (hm.occupied <= hm.maxOccupied) {
-	    val newChain = new Array[AnyRef](4)
-	    putKeyValue(newChain, 0, hm.table(index), hm.table(index + 1))
-	    putKeyValue(newChain, 2, entryKey, entryValue)
-	    putKeyValue(hm.table, index, CHAINED_KEY, newChain)
-    } else 
+      val newChain = new Array[AnyRef](4)
+      putKeyValue(newChain, 0, hm.table(index), hm.table(index + 1))
+      putKeyValue(newChain, 2, entryKey, entryValue)
+      putKeyValue(hm.table, index, CHAINED_KEY, newChain)
+    } else
       putByRehash(hm, entryKey, entryValue)
   }
 
