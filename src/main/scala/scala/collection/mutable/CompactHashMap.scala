@@ -78,6 +78,23 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
   
 //  TODO par
 //  override def par=
+  
+  /**
+   * Chaining constructor used internally
+   */
+  private[this] def this(capacity: Int, loadFactor: Int, dummy: AnyRef) = 
+    this(maxOccupied = CompactHashMap.computeMaxOccupied(capacity, loadFactor), table = CompactHashMap.allocateTable(capacity), loadFactor = loadFactor)
+
+  /**
+   * Creates a new CompactHashMap using the optionally specified initial capacity and load factor
+   * 
+   * @param initialCapacity is the initial amount of space that the hash table can accommodate without rehashing. The default is good
+   * for many uses but may be adjusted up or down when a CompactHashMap has a predicted size 
+   * @param loadFactor percentage of the capacity beyond which the hash table will double in
+   *   size given as an integer, e.g. 75 = 75%. The default should be good for most purposes.
+   */    
+  def this(initialCapacity: Int = CompactHashMap.DEFAULT_INITIAL_CAPACITY, loadFactor: Int = CompactHashMap.DEFAULT_LOAD_FACTOR) =
+    this(capacity = CompactHashMap.computeCapacity(initialCapacity, loadFactor), loadFactor = loadFactor, dummy = null)
 
   private[this] def index(key: AnyRef) = {
     // copied from GS-Collections
@@ -354,14 +371,14 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
  */
 object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   implicit def canBuildFrom[A, B]: CanBuildFrom[Coll, (A, B), CompactHashMap[A, B]] = new MapCanBuildFrom[A, B]
-  override def empty[A, B]: CompactHashMap[A, B] = create()
+  override def empty[A, B]: CompactHashMap[A, B] = new CompactHashMap()
 
   /**
-   * Creates a new CompactHashMap using the default load factor
+   * Creates a new empty CompactHashMap using the default load factor
    * which should be good settings for most uses and a small initial
    * capacity.
    */
-  def apply[A, B](): CompactHashMap[A, B] = create()
+  def apply[A, B](): CompactHashMap[A, B] = empty
  
    /**
    * Creates a new CompactHashMap using the default load factor
@@ -369,8 +386,9 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
    * the map uses the size of the values list.
    */
   override def apply[A, B](values: (A,B)*): CompactHashMap[A, B] = {
-    withSettings[A, B]()(values:_*)
+    withSettings[A, B](initialCapacity = values.size)(values:_*)
   }
+  
   /**
    * Creates a new CompactHashMap using the specified initial capacity and load factor
    * 
@@ -379,38 +397,30 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
    *   size given as an integer, e.g. 75 = 75%
    */
   def withSettings[A, B](initialCapacity: Int = DEFAULT_INITIAL_CAPACITY, loadFactor: Int = DEFAULT_LOAD_FACTOR)(values: (A,B)*): CompactHashMap[A, B] = {
-    val map = create[A, B](initialCapacity = initialCapacity, loadFactor = loadFactor)
+    val map = new CompactHashMap[A, B](initialCapacity = initialCapacity, loadFactor = loadFactor)
     values foreach {case (k,v) => map.put(k,v)}
     map
-  }
-  
-  private def create[A,B](initialCapacity: Int = DEFAULT_INITIAL_CAPACITY, loadFactor: Int = DEFAULT_LOAD_FACTOR) = {
-    if (initialCapacity < 0) throw new IllegalArgumentException("initial capacity cannot be less than 0");
-    val capacity = powerOfTwo(initialCapacity * 100 / loadFactor)
-
-    val table = allocateTable(capacity)
-    val maxOccupied = computeMaxOccupied(capacity, loadFactor)
-
-    new CompactHashMap[A,B](maxOccupied, table, loadFactor)
   }
 
   // the table size is twice the capacity to handle both keys and values
   private def allocateTable(capacity: Int) = new Array[AnyRef](capacity << 1)
 
+  // given a capacity and a load factor, what's the point at which we need to rehash?
   private def computeMaxOccupied(capacity: Int, loadFactor2: Int) = capacity * loadFactor2 / 100
-
-  private[this] def ceiling(v: Float): Int = {
-    val possibleResult = v.asInstanceOf[Int]
-    if (v - possibleResult > 0.0F) possibleResult + 1
-    else possibleResult
-  }
-
-  private[this] def powerOfTwo(x: Int): Int = {
-    var candidate = 1
-    while (candidate < x) {
-      candidate <<= 1
+  
+  // from a specified initial capacity compute an the capacity we'll use as being the next
+  // higher power of two above the initial capacity plus room to keep us under the load factor
+  private def computeCapacity(initialCapacity: Int, loadFactor: Int) = {
+    def powerOfTwo(x: Int): Int = {
+      var candidate = 1
+      while (candidate < x) {
+        candidate <<= 1
+      }
+      candidate
     }
-    candidate
+
+    if (initialCapacity < 0) throw new IllegalArgumentException("initial capacity cannot be less than 0");
+    powerOfTwo(initialCapacity * 100 / loadFactor)
   }
 
   /**
@@ -429,8 +439,8 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
     override def toString = "CHAINED_KEY"
   }
 
-  private def DEFAULT_LOAD_FACTOR = 75
-  private def DEFAULT_INITIAL_CAPACITY = 8
+  @inline private def DEFAULT_LOAD_FACTOR = 75
+  @inline private def DEFAULT_INITIAL_CAPACITY = 8
 
   /**
    * Sticks a key/value pair into an array at the index specified
