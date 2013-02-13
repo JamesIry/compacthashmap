@@ -62,19 +62,18 @@ import scala.collection.parallel.mutable.ParHashMap
 // implementors note. The goal of this class is to substantially reduce the amount of memory required to
 // store key/value pairs. To that aim is uses a lot of very low level hackery around array access and casting
 @SerialVersionUID(2L)
-class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRef], val loadFactor: Int)
+class CompactHashMap[K, V] private (var maxOccupied: Int, @transient var table: Array[AnyRef], val loadFactor: Int)
   extends AbstractMap[K, V]
   with Map[K, V]
   with MapLike[K, V, CompactHashMap[K, V]]
 //  TODO par
 //  with CustomParallelizable[(K, V), ParHashMap[K, V]]
-// TODO customer serialization
   with Serializable
 {
   import CompactHashMap._
 
   // the number of key/value pairs in the map
-  protected var occupied = 0
+  @transient protected var occupied = 0
   
 //  TODO par
 //  override def par=
@@ -94,7 +93,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
    *   size given as an integer, e.g. 75 = 75%. The default should be good for most purposes.
    */    
   def this(initialCapacity: Int = CompactHashMap.DEFAULT_INITIAL_CAPACITY, loadFactor: Int = CompactHashMap.DEFAULT_LOAD_FACTOR) =
-    this(capacity = CompactHashMap.computeCapacity(initialCapacity, loadFactor), loadFactor = loadFactor, dummy = null)
+    this(capacity = CompactHashMap.computeCapacity(initialCapacity, loadFactor), loadFactor = CompactHashMap.validateLoadFactor(loadFactor), dummy = null)
 
   private[this] def index(key: AnyRef) = {
     // copied from GS-Collections
@@ -289,12 +288,87 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
     
     def getResult(key: K, value: V) : T
   }
+  
+  /**
+   * The current number of key/value slots allocated in them main table
+   */
+  private def capacity = table.size / 2
+    
+  private def writeObject(out: java.io.ObjectOutputStream) {
+    quicklyValidate(size)
+    out.defaultWriteObject()
+    out writeInt capacity
+    out writeInt size
+    for ((k,v) <- iterator) {
+      out writeObject k
+      out writeObject v
+    }
+  }
+
+  private def readObject(in: java.io.ObjectInputStream) {
+    in.defaultReadObject()
+    val capacity = in.readInt()
+    table = allocateTable(capacity)
+    occupied = 0
+    val expectedSize = in.readInt()
+    for (i <- 0 until expectedSize) {
+      val k = in.readObject().asInstanceOf[K]
+      val v = in.readObject().asInstanceOf[V]
+      this put (k, v)
+    }
+    quicklyValidate(expectedSize)
+  }
+  
+  /**
+   * A quick validation of some core sanity rules that should be maintained
+   * during serialization/deserialization
+   */
+  private def quicklyValidate(expectedSize: Int) {
+    assert(maxOccupied > 0, s"max occupied was $maxOccupied, but expected it to be > 0")
+    assert(loadFactor > 0 && loadFactor <= 100, s"load factor was $loadFactor but expected it to be between 1 and 100 inclusive")
+    assert((table.size > 0) && (table.size % 2 == 0), s"table size was $table.size but expected it to be an even number > 0")
+    assert(expectedSize == size, s"size was $size but expectee $expectedSize")
+    assert(size <= maxOccupied, s"current size is $size but maxOccupied is $maxOccupied")
+  }
 
   /**
    * Diagnostic information about the internals of this hash map. Not normally
    * needed by ordinary code, but may be useful for diagnosing performance problems
    */
   class Diagnostics {
+    /**
+     * Verify that the internal structure of this hash map is fully consistent.
+     * Throws an assertion error on any problem
+     */
+    def fullyValidate {
+      var computedSize = 0
+      def checkKvs(table: Array[AnyRef], prefix: String, _mainIndex: Int) {
+        val mainTable = _mainIndex == -1
+        val kvs = keyValueBucketPairs(table).zipWithIndex
+        var prevNull = -1
+        for (((key,value), i) <- kvs) {
+          val mainIndex = if (_mainIndex == -1) i else _mainIndex
+          val fullPrefix = s"$prefix index $i"
+          if (key == null) {
+            prevNull = i
+            assert(value == null, s"$fullPrefix had null key but had non null value $value")
+          } else if (key.isInstanceOf[CHAINED_KEY.type]) {
+            assert(mainTable, s"$fullPrefix had CHAINED_KEY key but was already a chained table")
+            assert(value != null && value.isInstanceOf[Array[AnyRef]], s"$fullPrefix had CHAINED_KEY key but had non Array value $value")
+            checkKvs(value.asInstanceOf[Array[AnyRef]], s"$fullPrefix, chained ", i)
+          } else {
+            assert(mainTable || (prevNull == -1), s"$fullPrefix had non-key $key but null already encountered at $prevNull")
+            val hash = CompactHashMap.this.index(key)
+            assert(hash / 2 == mainIndex, s"$fullPrefix had key $key which hashed to ${hash / 2}")
+            computedSize += 1
+          }
+        }
+      }
+      
+      checkKvs(table, "", -1)
+      quicklyValidate(computedSize)
+    }
+    
     /**
      *  Produces a diagnostic dump of the table that underlies this hash map.
      */
@@ -315,7 +389,7 @@ class CompactHashMap[K, V] private (var maxOccupied: Int, var table: Array[AnyRe
     /**
      *  Number of buckets in the table
      */
-    def bucketsCount: Int = table.size / 2
+    def bucketsCount: Int = capacity
 
     /**
      * Number of buckets that don't have a key/value pair
@@ -406,7 +480,7 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
   private def allocateTable(capacity: Int) = new Array[AnyRef](capacity << 1)
 
   // given a capacity and a load factor, what's the point at which we need to rehash?
-  private def computeMaxOccupied(capacity: Int, loadFactor2: Int) = capacity * loadFactor2 / 100
+  private def computeMaxOccupied(capacity: Int, loadFactor: Int) = capacity * loadFactor / 100
   
   // from a specified initial capacity compute an the capacity we'll use as being the next
   // higher power of two above the initial capacity plus room to keep us under the load factor
@@ -421,6 +495,11 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
 
     if (initialCapacity < 0) throw new IllegalArgumentException("initial capacity cannot be less than 0");
     powerOfTwo(initialCapacity * 100 / loadFactor)
+  }
+  
+  private def validateLoadFactor(loadFactor: Int) = {
+    if(loadFactor <= 0 || loadFactor > 100) throw new IllegalArgumentException("load factor must be between 1 and 100 inclusive.")
+    loadFactor
   }
 
   /**
@@ -718,5 +797,4 @@ object CompactHashMap extends MutableMapFactory[CompactHashMap] {
     def notFoundNewCollision(hm: CompactHashMap[_, _], entryKey: AnyRef, entryValue: AnyRef, curKey: AnyRef, index: Int) =
       None
   }
-
 }
